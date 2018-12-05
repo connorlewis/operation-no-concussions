@@ -1,0 +1,87 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+# ideas: whistle at fair catch
+# 2 defenders for each gunner
+# Were the players in on the previous defensive/offensive series vs. "fresh" players
+# Thursday night games/short rest weeks
+# Travel
+# Ease of implementation, reduction? 
+pacman::p_load(tidyverse, magrittr)
+```
+
+
+```{r load data}
+game.dta <- read_csv("Data/game_data.csv")
+play.info.dta <- read_csv("Data/play_information.csv")
+punt.plyr.dta <- read_csv("Data/play_player_role_data.csv")
+plyr.reg.dta <- read_csv("Data/player_punt_data.csv")
+vid.link.control.dta <- read_csv("Data/video_footage-control.csv") # not entirely sure what this data is representing
+vid.link.injury.dta <- read_csv("Data/video_footage-injury.csv")
+vid.review.dta <- read_csv("Data/video_review.csv")
+```
+
+
+
+```{r join dta}
+
+all.dta <- vid.link.injury.dta %>%
+  rename(GameKey = gamekey, PlayID = playid) %>%
+  mutate(concusion = 1) %>%
+  full_join(vid.review.dta, by = c("GameKey", "PlayID")) %>%
+  left_join(punt.plyr.dta, by = c("GameKey", "PlayID", "GSISID")) %>%
+  left_join(punt.plyr.dta %>% mutate_at("GSISID", as.character), by = c("GameKey", "PlayID", "Primary_Partner_GSISID" = "GSISID"), suffix = c("", ".partner")) %>%
+  left_join(plyr.reg.dta %>% group_by(GSISID) %>% 
+              arrange(Number) %>% filter(row_number() == n())
+            , by = c("GSISID")) %>%
+  left_join(plyr.reg.dta %>% 
+              mutate_at("GSISID", as.character) %>% group_by(GSISID) %>% 
+              arrange(Number) %>% filter(row_number() == n()) 
+            , by = c("Primary_Partner_GSISID" = "GSISID"), suffix = c("", ".partner")) %>%
+  select(-contains("Season_Year")) %>%
+  full_join(play.info.dta, by = c("GameKey", "PlayID")) %>%
+  left_join(game.dta, by = c("GameKey")) %>%
+  select(-contains(".y")) %>%
+  replace_na(list(concusion = 0))
+
+conc.dta <- all.dta %>%
+  filter(concusion == 1)
+
+```
+
+
+
+```{r}
+conc.dta %>%
+  ggplot(aes(x = Game_Clock)) +
+  facet_wrap(~Quarter) +
+  geom_histogram()
+
+conc.dta %>%
+  ggplot(aes(x = Quarter)) +
+  geom_bar()
+
+
+conc.dta %>%
+  ggplot(aes(x = Player_Activity_Derived)) +
+  geom_bar()
+
+conc.dta %>%
+  ggplot(aes(x = Role.partner)) + 
+  geom_bar()
+
+conc.dta %>%
+  ggplot(aes(x = Role)) + 
+  geom_bar()
+
+
+
+```
+
