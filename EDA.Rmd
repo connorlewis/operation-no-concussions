@@ -8,6 +8,7 @@ This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute
 Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
 
 ```{r}
+# git push -u origin master
 # ideas: whistle at fair catch
 # 2 defenders for each gunner
 # Were the players in on the previous defensive/offensive series vs. "fresh" players
@@ -15,14 +16,33 @@ Try executing this chunk by clicking the *Run* button within the chunk or by pla
 # Travel
 # Ease of implementation, reduction? 
 pacman::p_load(tidyverse, magrittr)
+
+
+# define groupings of positions, coverage vs. return team
+# Offense vs. defensive players (do offensive players who are on the coverage team get hurt at higher rates? Aren't used to tackling)
+punt.return.positions <- c("VRq", "VRi", "VR", "PFB", "PR", "PDR1", "PDR2", "PDL3", "PDR3", "PDL2", "PDL1", "PLL", "PLR", "PLM")
+punt.cov.positions <- c("GL", "GR", "PLW", "PLT", "PLG", "PLS", "PRG", "PRT", "PRW", "PC", "PPR", "P")
+
+offense.positions <- c("C","FB", "G", "QB", "RB", "T", "TE", "WR")
+defense.positions <- c("CB", "DB", "DE", "DT", "FS", "ILB", "LB", "MLB", "NT", "OLB", "S", "SS")
+special.positions <- c("P", "K", "LS")
 ```
 
 
 ```{r load data}
 game.dta <- read_csv("Data/game_data.csv")
 play.info.dta <- read_csv("Data/play_information.csv")
-punt.plyr.dta <- read_csv("Data/play_player_role_data.csv")
-plyr.reg.dta <- read_csv("Data/player_punt_data.csv")
+punt.plyr.dta <- read_csv("Data/play_player_role_data.csv") %>%
+  mutate(Role.Unit = case_when(
+                Role %in% punt.return.positions ~ "Return"
+                , TRUE                          ~ "Coverage"
+  ))
+plyr.reg.dta <- read_csv("Data/player_punt_data.csv") %>%
+  mutate(Position.Unit = case_when(
+    Position %in% offense.positions   ~ "Offense"
+    , Position %in% defense.positions ~ "Defense"
+    , TRUE                            ~ "Special Teams"
+  ))
 vid.link.control.dta <- read_csv("Data/video_footage-control.csv") # not entirely sure what this data is representing
 vid.link.injury.dta <- read_csv("Data/video_footage-injury.csv")
 vid.review.dta <- read_csv("Data/video_review.csv")
@@ -48,15 +68,34 @@ all.dta <- vid.link.injury.dta %>%
   select(-contains("Season_Year")) %>%
   full_join(play.info.dta, by = c("GameKey", "PlayID")) %>%
   left_join(game.dta, by = c("GameKey")) %>%
-  select(-contains(".y")) %>%
-  replace_na(list(concusion = 0))
+  rename(play.description = PlayDescription.y) %>%
+  select(-contains(".y"), -Qtr,  -PlayDescription.x) %>%
+  replace_na(list(concusion = 0)) %>%
+  # get the score differential: 
+  separate(Score_Home_Visiting, c("home.score", "visit.score"), sep = " - ") %>%
+  mutate(Score.diff = abs(as.numeric(home.score)-as.numeric(visit.score))) %>%
+  # create time of game 
+  mutate(time.of.game = as.numeric(ms(substr(Game_Clock, 1, 5)) + ms(paste0((Quarter - 1) * 15, ":00")))/60) %>%
+  # determine play result
+  mutate(punt_result = case_when(
+           str_detect(play.description, "downed")                   ~ "Downed"
+           , str_detect(tolower(play.description), "muffs")         ~ "Muffs"
+           , str_detect(tolower(play.description), "fumbles")       ~ "Fumble"
+           , str_detect(tolower(play.description), "out of bounds") ~ "Punt OB"
+           , str_detect(tolower(play.description), "touchback")     ~ "Touchback"
+           , str_detect(tolower(play.description), "touchdown")     ~  "Touchdown"
+           , TRUE                                     ~ "Other"
+  ))
 
+#library(lubridate)
 conc.dta <- all.dta %>%
   filter(concusion == 1)
 
 ```
 
+# Basic Plots
 
+Let's create some basic plots to understand the reviewed information of the play
 
 ```{r}
 conc.dta %>%
@@ -83,5 +122,97 @@ conc.dta %>%
 
 
 
+all.dta %>%
+  group_by(Game_Day) %>%
+  summarise(conc.prev = length(concusion[concusion == 1])/n()) %>%
+  ggplot(aes(y = conc.prev, x = Game_Day)) + 
+  geom_bar(stat = "identity")
+```
+
+
+
+## Plots between Concussion vs. Non-consusion plays
+
+```{r}
+
+# Looking at score differential
+all.dta %>%
+  ggplot(aes(x = Score.diff, color = factor(concusion))) +
+  geom_density()
+
+all.dta %>%
+  ggplot(aes(y = Score.diff, x = factor(concusion))) +
+  geom_boxplot()
+
+
+all.dta %>%
+  ggplot(aes(y = Score.diff, x = factor(concusion))) +
+  geom_boxplot()
+
+#Punt Result: 
+all.dta %>%
+  group_by(punt_result) %>%
+  summarise(conc.prev = length(concusion[concusion == 1])/n()) %>%
+  ggplot(aes(y = conc.prev, x = punt_result)) + 
+  geom_bar(stat = "identity")
+
+
+# Let's look at time of game
+
+all.dta %>%
+  ggplot(aes(y = Score.diff, x =  time.of.game, color = factor(concusion))) +
+  geom_point() + 
+  geom_smooth()
+
+
+all.dta %>%
+  ggplot(aes(x = factor(concusion), y = time.of.game, color = Game_Day)) +
+  geom_boxplot()
+
+
+
+# Let's look at positions (of both the receiver of the concussion and the giver)
+conc.dta %>%
+  ggplot(aes(x = Role.Unit)) +
+  geom_bar()
+
+conc.dta %>%
+  ggplot(aes(x = Role.Unit, fill = Player_Activity_Derived)) +
+  geom_bar()
+
+# Nothing for turnover related (all No)
+conc.dta %>%
+  ggplot(aes(x = Position.Unit, fill = Player_Activity_Derived)) +
+  geom_bar()
+
+
+# Need to figure out overall prevelance of each type of players...not possible. 
+conc.dta %>%
+  ggplot(aes(x = Position.Unit.partner)) +
+  geom_bar()
+
+```
+
+
+Initial determinations 
+
+* Game Time Does not matter
+
+# Basic Models to Understand Incidences:
+
+```{r}
+
+# Game day on concusions (there is a plot above)
+full.mod <- glm(concusion ~ Game_Day*Week + Score.diff  + time.of.game, data = all.dta %>%
+                      mutate(Game_Day = fct_collapse(Game_Day
+                                                     , Other = c("Wednesday", "Thursday", "Saturday", "Friday")
+                                                     , Monday = "Monday"
+                                                     , Sunday = "Sunday"))
+                      #mutate(Game_Day = fct_relevel(Game_Day, "Thursday"))
+                      , family = "binomial")
+summary(full.mod)
+
+step(full.mod, direction = "both")
+names(all.dta)
 ```
 
